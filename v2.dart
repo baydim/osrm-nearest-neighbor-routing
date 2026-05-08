@@ -3,17 +3,13 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 
+/// Asumsi waktu berhenti di setiap titik (menit)
+const int stopDurationMinutes = 10;
+
 Future<void> main() async {
   const startLat = -8.803094;
   const startLng = 115.217775;
-
-  // Uncomment untuk test dengan destinasi random:
-  // final destinations = RouteSimulator.generateRandomDestinations(
-  //   centerLat: startLat,
-  //   centerLng: startLng,
-  //   count: 10,
-  //   radiusKm: 5,
-  // );
+  const startName = 'Depot (Titik Berangkat)';
 
   final destinations = <Destination>[
     const Destination('Pondok Deta Guest House', -8.801072, 115.219258),
@@ -31,45 +27,98 @@ Future<void> main() async {
     ),
   ];
 
-  print(
-    '🗺️  Membangun rute optimal untuk ${destinations.length} destinasi...\n',
-  );
+  print('🗺️  Membangun rute optimal untuk ${destinations.length} destinasi...');
+  print('⏸️  Asumsi waktu berhenti per titik : $stopDurationMinutes menit\n');
 
+  // ── Demo 1: raw result (seperti sebelumnya) ──────────────────────────────
   try {
     final result = await RoutePlanner.buildOptimalRoute(
       startLat: startLat,
       startLng: startLng,
+      startName: startName,
       destinations: destinations,
     );
 
-    var totalDistance = 0;
-    var totalDuration = 0;
+    print('\n╔══════════════════════════════════════════════════════════════╗');
+    print('║              FINAL ROUTE  (${result.length} TITIK)                        ║');
+    print('╚══════════════════════════════════════════════════════════════╝\n');
 
-    print('\n=== FINAL ROUTE (${result.length} TITIK) ===\n');
+    print('📍 [0] $startName');
+    print('       LatLng  : $startLat, $startLng');
+    print('       Status  : TITIK BERANGKAT');
+
+    var totalDrivingDistanceM = 0;
+    var totalDrivingDurationSec = 0;
 
     for (var i = 0; i < result.length; i++) {
       final step = result[i];
       final d = step.destination;
-      totalDistance += step.distanceMeters;
-      totalDuration += step.durationSeconds;
+      final fromName =
+          i == 0 ? startName : result[i - 1].destination.namaTempat;
 
-      print(
-        '${i + 1}. ${d.namaTempat}\n'
-        '   LatLng : ${d.latitude}, ${d.longitude}\n'
-        '   Jarak  : ${step.distanceMeters} m\n'
-        '   Durasi : ${(step.durationSeconds / 60).toStringAsFixed(1)} menit\n',
-      );
+      totalDrivingDistanceM += step.distanceFromPrevMeters;
+      totalDrivingDurationSec += step.durationFromPrevSeconds;
+
+      final depotDistM = step.distanceFromDepotMeters;
+      final depotDurMin = (step.durationFromDepotSeconds / 60).toStringAsFixed(1);
+      final prevDistM = step.distanceFromPrevMeters;
+      final prevDurMin = (step.durationFromPrevSeconds / 60).toStringAsFixed(1);
+
+      print('\n       │');
+      print('       │  🚗 $prevDistM m  •  $prevDurMin menit berkendara');
+      print('       │  dari : "$fromName"');
+      print('       ▼');
+      print('📍 [${i + 1}] ${d.namaTempat}');
+      print('       LatLng              : ${d.latitude}, ${d.longitude}');
+      print('       ── Dari Depot ──────────────────────────────');
+      print('       📏 Jarak dari depot  : $depotDistM m  (${(depotDistM / 1000).toStringAsFixed(2)} km)');
+      print('       ⏱️  Durasi dari depot : $depotDurMin menit berkendara');
+      print('       ── Dari Titik Sebelumnya ───────────────────');
+      print('       📏 Jarak dari sebelum: $prevDistM m  (${(prevDistM / 1000).toStringAsFixed(2)} km)');
+      print('       ⏱️  Durasi dari sebelum: $prevDurMin menit berkendara');
+      print('       ── Aktivitas di Titik ──────────────────────');
+      print('       ⏸️  Waktu berhenti    : $stopDurationMinutes menit');
     }
 
-    print('=== RINGKASAN ===');
-    print(
-      '📏 Total Jarak  : $totalDistance m (${(totalDistance / 1000).toStringAsFixed(2)} km)',
+    final totalDrivingMin = totalDrivingDurationSec / 60;
+    final totalStopMin = result.length * stopDurationMinutes;
+    final totalMin = totalDrivingMin + totalStopMin;
+    final totalHour = (totalMin / 60).floor();
+    final totalRemainMin = (totalMin % 60).round();
+
+    print('\n══════════════════════════════════════════════════════════════');
+    print('📊 RINGKASAN PERJALANAN');
+    print('══════════════════════════════════════════════════════════════');
+    print('📏 Total Jarak Tempuh   : $totalDrivingDistanceM m  (${(totalDrivingDistanceM / 1000).toStringAsFixed(2)} km)');
+    print('🚗 Total Waktu Berkendara: ${totalDrivingMin.toStringAsFixed(1)} menit');
+    print('⏸️  Total Waktu Berhenti : $totalStopMin menit  (${result.length} titik × $stopDurationMinutes menit)');
+    print('──────────────────────────────────────────────────────────────');
+    print('⏱️  TOTAL WAKTU KESELURUHAN');
+    print('   Tanpa berhenti : ${totalDrivingMin.toStringAsFixed(1)} menit');
+    print('   Dengan berhenti: ${totalMin.toStringAsFixed(1)} menit  ($totalHour jam $totalRemainMin menit)');
+    print('──────────────────────────────────────────────────────────────');
+    print('🚀 OSRM API CALL     : ${OsrmService.tableCallCount}x');
+    print('✅ Efisiensi         : 1 call untuk ${destinations.length} titik');
+    print('══════════════════════════════════════════════════════════════\n');
+  } on OsrmException catch (e) {
+    print('❌ OSRM Error: ${e.message}');
+  } catch (e, st) {
+    print('❌ Error tidak terduga: $e\n$st');
+  }
+
+  // ── Demo 2: pakai RouteOptimizerService (Flutter-ready) ─────────────────
+  print('\n── Demo RouteOptimizerService (JSON output) ──\n');
+  try {
+    final service = RouteOptimizerService(stopDurationMinutesPerStop: 10);
+
+    final json = await service.buildOptimalRouteJson(
+      startLat: startLat,
+      startLng: startLng,
+      startName: startName,
+      destinations: destinations,
     );
-    print(
-      '⏱️  Total Durasi : ${(totalDuration / 60).toStringAsFixed(1)} menit',
-    );
-    print('\n🚀 TOTAL OSRM TABLE CALL : ${OsrmService.tableCallCount}');
-    print('   (${destinations.length} destinasi → cukup 1 API call)\n');
+
+    print(const JsonEncoder.withIndent('  ').convert(json));
   } on OsrmException catch (e) {
     print('❌ OSRM Error: ${e.message}');
   } catch (e, st) {
@@ -86,27 +135,63 @@ class Destination {
   final double latitude;
   final double longitude;
 
-  // FIX #7: gunakan const constructor
   const Destination(this.namaTempat, this.latitude, this.longitude);
+
+  /// Untuk keperluan serialisasi ke JSON
+  Map<String, dynamic> toJson() => {
+        'nama_tempat': namaTempat,
+        'latitude': latitude,
+        'longitude': longitude,
+      };
+
+  /// Buat Destination dari Map (berguna saat terima data dari Flutter UI)
+  factory Destination.fromJson(Map<String, dynamic> json) => Destination(
+        json['nama_tempat'] as String,
+        (json['latitude'] as num).toDouble(),
+        (json['longitude'] as num).toDouble(),
+      );
 }
 
 class RouteStep {
   final Destination destination;
-  final int distanceMeters;
-  final int durationSeconds;
+  final int distanceFromPrevMeters;
+  final int durationFromPrevSeconds;
+  final int distanceFromDepotMeters;
+  final int durationFromDepotSeconds;
 
-  // FIX #7: gunakan const constructor
   const RouteStep({
     required this.destination,
-    required this.distanceMeters,
-    required this.durationSeconds,
+    required this.distanceFromPrevMeters,
+    required this.durationFromPrevSeconds,
+    required this.distanceFromDepotMeters,
+    required this.durationFromDepotSeconds,
   });
+
+  Map<String, dynamic> toJson() => {
+        'destination': destination.toJson(),
+        'from_prev': {
+          'distance_m': distanceFromPrevMeters,
+          'distance_km': double.parse(
+            (distanceFromPrevMeters / 1000).toStringAsFixed(2),
+          ),
+          'duration_seconds': durationFromPrevSeconds,
+          'duration_minutes': double.parse(
+            (durationFromPrevSeconds / 60).toStringAsFixed(1),
+          ),
+        },
+        'from_depot': {
+          'distance_m': distanceFromDepotMeters,
+          'distance_km': double.parse(
+            (distanceFromDepotMeters / 1000).toStringAsFixed(2),
+          ),
+          'duration_seconds': durationFromDepotSeconds,
+          'duration_minutes': double.parse(
+            (durationFromDepotSeconds / 60).toStringAsFixed(1),
+          ),
+        },
+      };
 }
 
-/// Full (N+1)×(N+1) distance & duration matrix dari OSRM TABLE API.
-/// [distances][i][j] = jarak dari node i ke node j, dalam meter.
-/// [durations][i][j] = durasi dari node i ke node j, dalam detik.
-/// Indeks 0 = origin (titik awal), indeks 1..N = destinations[0..N-1].
 class OsrmMatrix {
   final List<List<int>> distances;
   final List<List<int>> durations;
@@ -127,11 +212,157 @@ class OsrmException implements Exception {
 }
 
 //////////////////////////////////////////////////////
-/// ROUTE PLANNER
+/// ROUTE OPTIMIZER SERVICE  ← wrapper Flutter-ready
 ///
-/// FIX #1 – Satu OSRM TABLE call untuk full (N+1)×(N+1) matrix.
-/// FIX #2 – Nearest Neighbor berbasis matrix cache (0 API call tambahan).
-/// FIX #4 – 2-opt improvement setelah NN     (0 API call tambahan).
+/// Gunakan class ini di Flutter app.
+/// Semua algo tetap sama, hanya output dibungkus Map<String, dynamic>
+/// sehingga bisa langsung dipakai State Management (BLoC, GetX, Riverpod).
+///
+/// Contoh pemakaian di Flutter:
+///
+///   final service = RouteOptimizerService(stopDurationMinutesPerStop: 10);
+///
+///   final json = await service.buildOptimalRouteJson(
+///     startLat: currentLat,
+///     startLng: currentLng,
+///     startName: 'Gudang Utama',
+///     destinations: listDestination,
+///   );
+///
+///   // Akses data:
+///   final steps = json['steps'] as List;
+///   final totalKm = json['summary']['total_distance_km'];
+///   final totalMenitDenganBerhenti = json['summary']['total_duration_with_stop_minutes'];
+//////////////////////////////////////////////////////
+
+class RouteOptimizerService {
+  /// Berapa menit kurir berhenti di setiap titik untuk mengerjakan tugasnya
+  final int stopDurationMinutesPerStop;
+
+  const RouteOptimizerService({this.stopDurationMinutesPerStop = 10});
+
+  /// Hitung rute optimal dan kembalikan sebagai [Map<String, dynamic>].
+  ///
+  /// Return structure:
+  /// ```json
+  /// {
+  ///   "depot": { "name", "latitude", "longitude" },
+  ///   "steps": [
+  ///     {
+  ///       "order": 1,
+  ///       "destination": { "nama_tempat", "latitude", "longitude" },
+  ///       "from_prev":  { "distance_m", "distance_km", "duration_seconds", "duration_minutes" },
+  ///       "from_depot": { "distance_m", "distance_km", "duration_seconds", "duration_minutes" },
+  ///       "stop_duration_minutes": 10
+  ///     }
+  ///   ],
+  ///   "summary": {
+  ///     "total_stops": 5,
+  ///     "total_distance_m": 13450,
+  ///     "total_distance_km": 13.45,
+  ///     "total_driving_duration_seconds": 1704,
+  ///     "total_driving_duration_minutes": 28.4,
+  ///     "total_stop_duration_minutes": 50,
+  ///     "total_duration_with_stop_minutes": 78.4,
+  ///     "total_duration_with_stop_hours": 1,
+  ///     "total_duration_with_stop_remaining_minutes": 18,
+  ///     "osrm_api_call_count": 1
+  ///   }
+  /// }
+  /// ```
+  Future<Map<String, dynamic>> buildOptimalRouteJson({
+    required double startLat,
+    required double startLng,
+    required String startName,
+    required List<Destination> destinations,
+  }) async {
+    // Panggil algo yang sudah ada — tidak ada perubahan apapun di sini
+    final steps = await RoutePlanner.buildOptimalRoute(
+      startLat: startLat,
+      startLng: startLng,
+      startName: startName,
+      destinations: destinations,
+    );
+
+    // ── Hitung summary ─────────────────────────────────────────────────────
+    var totalDistanceM = 0;
+    var totalDrivingSeconds = 0;
+
+    for (final step in steps) {
+      totalDistanceM += step.distanceFromPrevMeters;
+      totalDrivingSeconds += step.durationFromPrevSeconds;
+    }
+
+    final totalDrivingMin = totalDrivingSeconds / 60;
+    final totalStopMin = steps.length * stopDurationMinutesPerStop;
+    final totalMin = totalDrivingMin + totalStopMin;
+
+    // ── Susun JSON output ──────────────────────────────────────────────────
+    return {
+      'depot': {
+        'name': startName,
+        'latitude': startLat,
+        'longitude': startLng,
+      },
+      'steps': steps.asMap().entries.map((entry) {
+        final i = entry.key;
+        final step = entry.value;
+        return {
+          'order': i + 1,
+          ...step.toJson(),
+          'stop_duration_minutes': stopDurationMinutesPerStop,
+        };
+      }).toList(),
+      'summary': {
+        'total_stops': steps.length,
+        'total_distance_m': totalDistanceM,
+        'total_distance_km': double.parse(
+          (totalDistanceM / 1000).toStringAsFixed(2),
+        ),
+        'total_driving_duration_seconds': totalDrivingSeconds,
+        'total_driving_duration_minutes': double.parse(
+          totalDrivingMin.toStringAsFixed(1),
+        ),
+        'total_stop_duration_minutes': totalStopMin,
+        'total_duration_with_stop_minutes': double.parse(
+          totalMin.toStringAsFixed(1),
+        ),
+        'total_duration_with_stop_hours': (totalMin / 60).floor(),
+        'total_duration_with_stop_remaining_minutes': (totalMin % 60).round(),
+        'osrm_api_call_count': OsrmService.tableCallCount,
+      },
+    };
+  }
+
+  /// Versi ringkas: hanya kembalikan list steps tanpa summary.
+  /// Berguna kalau Yang Mulia hanya butuh urutan titik saja untuk di-render di peta.
+  Future<List<Map<String, dynamic>>> buildOptimalStepsOnly({
+    required double startLat,
+    required double startLng,
+    required String startName,
+    required List<Destination> destinations,
+  }) async {
+    final steps = await RoutePlanner.buildOptimalRoute(
+      startLat: startLat,
+      startLng: startLng,
+      startName: startName,
+      destinations: destinations,
+    );
+
+    return steps.asMap().entries.map((entry) {
+      final i = entry.key;
+      final step = entry.value;
+      return {
+        'order': i + 1,
+        ...step.toJson(),
+        'stop_duration_minutes': stopDurationMinutesPerStop,
+      };
+    }).toList();
+  }
+}
+
+//////////////////////////////////////////////////////
+/// ROUTE PLANNER  (tidak ada perubahan algo)
 //////////////////////////////////////////////////////
 
 class RoutePlanner {
@@ -140,15 +371,12 @@ class RoutePlanner {
   static Future<List<RouteStep>> buildOptimalRoute({
     required double startLat,
     required double startLng,
+    required String startName,
     required List<Destination> destinations,
   }) async {
     final n = destinations.length;
     if (n == 0) return [];
 
-    // ── LANGKAH 1: Ambil full (N+1)×(N+1) matrix dalam SATU API call ───────
-    // Indeks 0 = origin, indeks 1..N = destinations[0..N-1].
-    // Tanpa parameter sources= → OSRM mengembalikan matriks penuh NxN.
-    // SEBELUMNYA: loop N kali → N API calls. SEKARANG: selalu 1 API call.
     print('📡 Memanggil OSRM TABLE API (1 call untuk ${n + 1} node)...');
     final matrix = await _osrm.getFullMatrix(
       originLat: startLat,
@@ -156,51 +384,47 @@ class RoutePlanner {
       destinations: destinations,
     );
 
-    // ── LANGKAH 2: Nearest Neighbor Heuristic berbasis matrix cache ─────────
-    // Kompleksitas O(N²) – tanpa tambahan API call.
     final nnOrder = _nearestNeighbor(matrix, n);
     final nnCost = _pathCost(matrix, nnOrder);
-    print('✅ Nearest Neighbor selesai. Jarak awal   : $nnCost m');
+    print('✅ Nearest Neighbor selesai. Jarak awal    : $nnCost m');
 
-    // ── LANGKAH 3: 2-opt Improvement untuk open path ────────────────────────
-    // Kompleksitas O(N² × iterasi) – tanpa tambahan API call.
     final optimizedOrder = _twoOptImprovement(matrix, nnOrder, n);
     final optCost = _pathCost(matrix, optimizedOrder);
     final pct = nnCost > 0
         ? ((nnCost - optCost) / nnCost * 100).toStringAsFixed(1)
         : '0.0';
-    print('✅ 2-opt selesai.          Jarak akhir   : $optCost m (hemat $pct%)');
+    print('✅ 2-opt selesai.          Jarak akhir    : $optCost m (hemat $pct%)');
 
-    // ── LANGKAH 4: Susun RouteStep dari order yang sudah dioptimasi ─────────
     final result = <RouteStep>[];
-    var prevNode = 0; // indeks 0 = origin
+    var prevNode = 0;
 
     for (final destIdx in optimizedOrder) {
-      final matrixIdx = destIdx + 1; // offset 1 karena indeks 0 = origin
+      final matrixIdx = destIdx + 1;
+
       result.add(
         RouteStep(
           destination: destinations[destIdx],
-          distanceMeters: matrix.distances[prevNode][matrixIdx],
-          durationSeconds: matrix.durations[prevNode][matrixIdx],
+          distanceFromPrevMeters: matrix.distances[prevNode][matrixIdx],
+          durationFromPrevSeconds: matrix.durations[prevNode][matrixIdx],
+          distanceFromDepotMeters: matrix.distances[0][matrixIdx],
+          durationFromDepotSeconds: matrix.durations[0][matrixIdx],
         ),
       );
+
       prevNode = matrixIdx;
     }
 
     return result;
   }
 
-  // ── Nearest Neighbor Heuristic ──────────────────────────────────────────
-  // Dari origin (node 0), setiap langkah pilih destinasi terdekat yang
-  // belum dikunjungi. Return: urutan indeks destinasi (0-based).
   static List<int> _nearestNeighbor(OsrmMatrix matrix, int n) {
     final visited = List<bool>.filled(n, false);
     final order = <int>[];
-    var currentNode = 0; // matriks indeks 0 = origin
+    var currentNode = 0;
 
     for (var step = 0; step < n; step++) {
       var bestDestIdx = -1;
-      var bestDist = 0x7FFFFFFFFFFFFFFF; // max int64
+      var bestDist = 999999999;
 
       for (var i = 0; i < n; i++) {
         if (visited[i]) continue;
@@ -219,9 +443,6 @@ class RoutePlanner {
     return order;
   }
 
-  // ── 2-opt Improvement (Open Path, bukan circular TSP) ──────────────────
-  // Iteratif: coba semua pasangan (i, k), balik segmen [i..k] jika lebih
-  // hemat. Ulangi hingga tidak ada perbaikan (local optimum tercapai).
   static List<int> _twoOptImprovement(
     OsrmMatrix matrix,
     List<int> order,
@@ -241,7 +462,7 @@ class RoutePlanner {
           if (_pathCost(matrix, candidate) < currentCost) {
             best = candidate;
             improved = true;
-            break outerLoop; // restart pencarian dengan rute terbaik
+            break outerLoop;
           }
         }
       }
@@ -250,20 +471,16 @@ class RoutePlanner {
     return best;
   }
 
-  // Hitung total jarak rute: origin → dest[order[0]] → ... → dest[order[n-1]].
   static int _pathCost(OsrmMatrix matrix, List<int> order) {
     var total = 0;
-    var prev = 0; // matriks indeks 0 = origin
-
+    var prev = 0;
     for (final destIdx in order) {
       total += matrix.distances[prev][destIdx + 1];
       prev = destIdx + 1;
     }
-
     return total;
   }
 
-  // Buat salinan order dengan segmen [i..k] dibalik (2-opt swap).
   static List<int> _reverseSegment(List<int> order, int i, int k) {
     final result = List<int>.from(order);
     var lo = i;
@@ -280,12 +497,7 @@ class RoutePlanner {
 }
 
 //////////////////////////////////////////////////////
-/// OSRM TABLE SERVICE
-///
-/// FIX #1 – 1 call untuk full (N+1)×(N+1) matrix (tanpa sources=).
-/// FIX #2 – HTTP timeout 20 detik.
-/// FIX #6 – Retry 3x dengan exponential backoff untuk error jaringan/5xx.
-/// FIX #8 – Error message informatif dengan code & message dari OSRM.
+/// OSRM TABLE SERVICE  (tidak ada perubahan)
 //////////////////////////////////////////////////////
 
 class OsrmService {
@@ -293,12 +505,8 @@ class OsrmService {
 
   static const _timeout = Duration(seconds: 20);
   static const _maxRetries = 3;
-
-  /// Sentinel untuk jarak/durasi null (node tidak terjangkau).
   static const _unreachable = 999999999;
 
-  /// Ambil full (N+1)×(N+1) distance & duration matrix dalam SATU HTTP call.
-  /// Indeks 0 = origin, indeks 1..N = destinations[0..N-1].
   Future<OsrmMatrix> getFullMatrix({
     required double originLat,
     required double originLng,
@@ -306,14 +514,11 @@ class OsrmService {
   }) async {
     tableCallCount++;
 
-    // Format koordinat OSRM: longitude,latitude (lng dulu, bukan lat)
     final coords = [
       '$originLng,$originLat',
       ...destinations.map((d) => '${d.longitude},${d.latitude}'),
     ].join(';');
 
-    // Tanpa `sources=` → OSRM mengembalikan matriks penuh (N+1)×(N+1)
-    // SEBELUMNYA: sources=0 → hanya baris origin, sehingga perlu N kali call
     final url = Uri.parse(
       'https://router.project-osrm.org/table/v1/driving/$coords'
       '?annotations=distance,duration',
@@ -323,7 +528,6 @@ class OsrmService {
     final json = jsonDecode(body) as Map<String, dynamic>;
 
     if (json['code'] != 'Ok') {
-      // FIX #8: sertakan code dan message dari respons OSRM
       throw OsrmException(
         'OSRM TABLE gagal — '
         'code: "${json['code']}", '
@@ -331,50 +535,36 @@ class OsrmService {
       );
     }
 
-    final rawDist = json['distances'] as List;
-    final rawDur = json['durations'] as List;
-
-    // Parse baris×kolom → int (null = tidak terjangkau → sentinel _unreachable)
     List<List<int>> parseMatrix(List raw) => raw
         .map<List<int>>(
           (row) => (row as List)
-              .map<int>((v) => v == null ? _unreachable : (v as num).round())
+              .map<int>(
+                  (v) => v == null ? _unreachable : (v as num).round())
               .toList(),
         )
         .toList();
 
     return OsrmMatrix(
-      distances: parseMatrix(rawDist),
-      durations: parseMatrix(rawDur),
+      distances: parseMatrix(json['distances'] as List),
+      durations: parseMatrix(json['durations'] as List),
     );
   }
 
-  /// HTTP GET dengan:
-  ///  - Timeout 20 detik per attempt.
-  ///  - Retry maks 3x (hanya untuk error jaringan & HTTP 5xx).
-  ///  - HTTP 4xx langsung throw tanpa retry (client error).
-  ///  - Exponential backoff: 500 ms → 1000 ms → 2000 ms.
   Future<String> _getWithRetry(Uri url) async {
     Object? lastError;
 
     for (var attempt = 1; attempt <= _maxRetries; attempt++) {
       try {
-        final response = await http
-            .get(url)
-            .timeout(
-              _timeout,
-              onTimeout: () {
-                // FIX #2: lempar OsrmException saat timeout agar langsung dikenali
-                throw OsrmException(
-                  'Request timeout setelah ${_timeout.inSeconds} detik '
-                  '(percobaan $attempt/$_maxRetries)',
-                );
-              },
-            );
+        final response = await http.get(url).timeout(
+          _timeout,
+          onTimeout: () => throw OsrmException(
+            'Request timeout setelah ${_timeout.inSeconds} detik '
+            '(percobaan $attempt/$_maxRetries)',
+          ),
+        );
 
         if (response.statusCode == 200) return response.body;
 
-        // 4xx = kesalahan di sisi client → tidak ada gunanya retry
         if (response.statusCode >= 400 && response.statusCode < 500) {
           throw OsrmException(
             'HTTP ${response.statusCode} (Client Error): ${response.reasonPhrase}. '
@@ -382,24 +572,20 @@ class OsrmService {
           );
         }
 
-        // 5xx = server error → catat dan coba lagi
         lastError = OsrmException(
           'HTTP ${response.statusCode} (Server Error): ${response.reasonPhrase} '
           '(percobaan $attempt/$_maxRetries)',
         );
       } on OsrmException {
-        // OsrmException (timeout atau 4xx) → langsung bubble up, jangan retry
         rethrow;
       } catch (e) {
-        // Error jaringan lainnya (SocketException, dll.) → catat dan retry
         lastError = e;
       }
 
       if (attempt < _maxRetries) {
-        final waitMs = 500 * (1 << (attempt - 1)); // 500 ms, 1000 ms, 2000 ms
+        final waitMs = 500 * (1 << (attempt - 1));
         print(
-          '⚠️  Percobaan $attempt gagal ($lastError), '
-          'retry dalam ${waitMs}ms...',
+          '⚠️  Percobaan $attempt gagal ($lastError), retry dalam ${waitMs}ms...',
         );
         await Future.delayed(Duration(milliseconds: waitMs));
       }
@@ -413,11 +599,7 @@ class OsrmService {
 }
 
 //////////////////////////////////////////////////////
-/// SIMULATOR
-///
-/// FIX #3: longitude correction menggunakan cos(latitude).
-/// SEBELUMNYA: dy = radiusKm / 111        → SALAH karena 1° lon ≠ 1° lat
-/// SEKARANG  : dy = radiusKm / (111 × cos(lat)) → BENAR, sesuai geografi
+/// SIMULATOR  (tidak ada perubahan)
 //////////////////////////////////////////////////////
 
 class RouteSimulator {
@@ -430,11 +612,7 @@ class RouteSimulator {
     final rand = Random();
     final list = <Destination>[];
 
-    // 1° latitude ≈ 111 km (hampir konstan di seluruh bumi)
     const latDegPerKm = 1.0 / 111.0;
-
-    // 1° longitude ≈ 111 km × cos(latitude) → mengecil mendekati kutub
-    // FIX: tambahkan faktor cos(lat) agar titik acak tersebar merata secara fisik
     final lngDegPerKm = 1.0 / (111.0 * cos(centerLat * pi / 180.0));
 
     for (var i = 0; i < count; i++) {
