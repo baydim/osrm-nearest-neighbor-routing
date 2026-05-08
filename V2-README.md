@@ -29,7 +29,7 @@ Designed to be embedded directly into Flutter apps via `RouteOptimizerService`, 
 
 ## 🚀 Try It Live in DartPad
 
-[![Open in DartPad](https://img.shields.io/badge/Open%20in-DartPad-blue?style=for-the-badge&logo=dart)](https://dartpad.dev/?gist=fe5cf28b829231bb27c49e7f79301af6)
+[![Open in DartPad](https://img.shields.io/badge/Open%20in-DartPad-blue?style=for-the-badge&logo=dart)](https://dartpad.dev/?gist=f67a793118aa43a324f3305ee8eab56b)
 
 *(Klik badge di atas untuk mencoba demo langsung di DartPad)*
 
